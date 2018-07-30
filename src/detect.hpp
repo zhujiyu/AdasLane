@@ -2,42 +2,12 @@
 #define _LANE_DETECT_HPP_SJS_ZJY_
 
 #include "opencv2/core.hpp"
-
+#include "opencv2/imgproc.hpp"
 
 #define MAX_DISPARITY_PIXELS       128
 #define MAX_SCAN_BLOCK_COUNT      1028  ///< 最多处理1028个块，但实际不一定有这么多
 #define MAX_SCAN_IMAGE_ROWS        256  ///< 取图像中间部分，最多256行，实际也可能小于256
 #define DEFAULT_BLOCK_SIZE           8
-
-
-class StereoPre
-{
-	cv::Mat1b src, rec;
-	cv::Mat1s edge, _sum;
-
-	cv::Mat rmapx, rmapy;
-	cv::Rect left, rght;
-
-public:
-
-	const size_t top, blockw, blockh;
-
-	const cv::Mat &CvRecImage() const { return rec; }
-	const cv::Mat &CvEdgeImage() const { return edge; }
-	const cv::Mat &CvSumImage() const { return _sum; }
-
-	StereoPre(const Birdview &bird, const size_t bw = 4, const size_t bh = 1);
-
-	int operator()(const cv::Mat srcimg);
-};
-
-cv::Mat1s GenEdgeImage(const cv::Mat src, const cv::Size size);
-
-void GenEdgeImage(const cv::Mat src, const cv::Size size, cv::Mat1s &edge);
-
-void ShiftDiff(const cv::Mat1s src, const int sx, const int sy, cv::Mat1s &dst);
-
-void CustomSum(const cv::Mat1b src, const int bw, const int bh, cv::Mat1s &dst);
 
 
 struct EdgeLine
@@ -127,8 +97,8 @@ public:
 
 	virtual void SetStripe(DetectParam *step) = 0;
 
-	virtual int SetDetectRegion(const cv::Size imageSize, const cv::Mat road2image,
-			const float width, const float height, const float dist1 = 5, const float dist2 = 50) = 0;
+	virtual void SetDetectRegion(const cv::Size imageSize, const cv::Mat road2image,
+			const float dist1 = 350, const float dist2 = 5000) = 0;
 
 	virtual void SetDetectRegion(const cv::Size imageSize, const int bottom, const int top) = 0;
 
@@ -146,6 +116,11 @@ protected:
 	std::vector<LaneBlock*> lane_blocks;
 };
 
+
+cv::Rect DetectRegion(const cv::Size imageSize, const cv::Mat road2image,
+		const float dist1 = 350, const float dist2 = 5000);
+
+void GenEdgeImage(const cv::Mat src, const cv::Size size, cv::Mat1s &edge);
 
 inline void DrawSolidLine(cv::Mat image, const cv::Vec4f line,
 		const cv::Scalar color = cv::Scalar(0, 255, 255),
@@ -247,33 +222,5 @@ inline std::ostream& operator<< (std::ostream& out, const LaneBlock &block)
 	return out;
 }
 
-
-//	const int GetRowStep() const { return rowStep.stripe; }
-
-//	inline DetectRowStep &operator=(DetectRowStep &step)
-//	{
-//		this->max_interv = step.max_interv;
-//		this->stripe = step.stripe;
-//		this->max_dx = step.max_dx;
-//		this->max_dw = step.max_dw;
-//		this->min_dw = step.min_dw;
-//		return *this;
-//	}
-
-// cv::Mat cvtYUV422toBGR(const uchar* src_data, const cv::Size size);
-
-// cv::Mat cvtYUV422toBGR(uchar *src_data, const cv::Size size,
-// 		const cv::Rect rect);
-
-// cv::Mat cvtYUV422toYellowGray(const uchar* src_data, const cv::Size size,
-// 		const size_t rowStep = 1);
-
-// cv::Mat cvtYUV422toYellowGray(uchar *src_data, const cv::Size size,
-// 		const cv::Rect rect, const size_t rowStep = 1);
-
-// cv::Mat cvtBGR2YeloowGray(const cv::Mat src);
-
-// cv::Mat cvtBGR2YeloowGray(const cv::Mat src, const cv::Rect rect,
-// 		const int rowStep = 1);
 
 #endif//_LANE_DETECT_HPP_SJS_ZJY_

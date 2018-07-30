@@ -854,7 +854,7 @@ void LaneLine::CheckLineFlag(int &flag, cv::Vec4f &line, const cv::Mat road2imag
 			&& frameIndex - succeedIndex < VALID_CONFIRM_FRAME*2 )
 	{
 		flag = LaneTrack::CALCULATED_LINE;
-		TransLine(road_line, line, road2image, 200);
+		TransLine(road_line, line, road2image, 1000);
 	}
 
 	if( frameIndex - index < VALID_CONFIRM_FRAME )
@@ -934,45 +934,3 @@ void LaneTrackBasedRoad::ShowRoadLines(cv::Mat &bdimg, const float pixel_unit,
 	DrawBirdLine(bdimg, left.road_line, green, pixel_unit, shift);
 	DrawBirdLine(bdimg, rght.road_line, green, pixel_unit, shift);
 }
-
-//	if( rghtIndex > -1 && rght.prm.distance - blockParams[rghtIndex].dist0 > lane_width/2 )
-//	{
-////		std::cout<<blockParams[rghtIndex]<<std::endl;
-////		LOGI("rght x0000: %f.", blockParams[rghtIndex].x0000);
-//		if( rghtIndex > -1 && blockParams[rghtIndex].x0000 < LANESHIFT_THRESH/2 )
-//		{
-//			LOGI("set rght to left.");
-//			if( leftIndex > -1 )
-//				lineCount--;
-//			leftIndex = rghtIndex;
-//			rghtIndex = -1;
-//		}
-//		else //if( blockParams[rghtIndex].x0000 < thresh2 )
-//		{
-//			LOGI("copy left to rght.");
-//			left.CopyTo(rght);
-//			left.Reset();
-//			lane_shift += lane_width;
-//		}
-//	}
-//
-//	if( leftIndex > -1 && left.prm.distance - blockParams[leftIndex].dist0 > lane_width/2 )
-//	{
-////		std::cout<<blockParams[leftIndex]<<std::endl;
-////		LOGI("left x0000: %f.", blockParams[leftIndex].x0000);
-//		if( blockParams[leftIndex].x0000 > -LANESHIFT_THRESH/2 )
-//		{
-//			LOGI("set left to rght.");
-//			if( rghtIndex > -1 )
-//				lineCount--;
-//			rghtIndex = leftIndex;
-//			leftIndex = -1;
-//		}
-//		else //if( blockParams[leftIndex].x0000 > -thresh2 )
-//		{
-//			LOGI("copy rght to left.");
-//			rght.CopyTo(left);
-//			rght.Reset();
-//			lane_shift -= lane_width;
-//		}
-//	}

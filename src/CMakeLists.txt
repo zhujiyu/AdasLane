@@ -83,22 +83,22 @@ endmacro()
 InitProject("ADAS-LANE")
 SetOutFileName("lane30")
 
-INCLUDE_DIRECTORIES(..)
+INCLUDE_DIRECTORIES(./)
 
 find_package(OpenCV REQUIRED)
 link_libraries(opencv_core opencv_highgui opencv_imgproc opencv_calib3d)
 
 add_executable(${output_filename} 
-../core/comimg.cpp
-../core/stereo.cpp
-../core/tricam.cpp
-../core/plot.cpp
-../core/yuvcvt.cpp
+core/comimg.cpp
+core/stereo.cpp
+core/plot.cpp
+core/yuvcvt.cpp
 
-../ground/distgrid.cpp
+ground/distgrid.cpp
 
 detect.cpp
 track.cpp
 road.cpp
+locate.cpp
 main_lane.cpp
 )

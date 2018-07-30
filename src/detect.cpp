@@ -1,9 +1,9 @@
 #include <vector>
-
 #include "opencv2/imgproc.hpp"
 #include "opencv2/highgui.hpp"
 
 #define LOG_TAG "LaneDetect detect.cpp"
+
 #include "core/utils.hpp"
 #include "track.hpp"
 
@@ -31,30 +31,6 @@ void CustomSum(const cv::Mat1b src, const int bw, const int bh, cv::Mat1s &dst)
 	cv::filter2D(src, dst, CV_16S, sumkr);
 }
 
-cv::Mat1s GenEdgeImage(const cv::Mat src, const cv::Size size)
-{
-	cv::Mat1s edge, _sum(src.size());
-	cv::Mat gray = src;
-
-	if( size.width < 1 || size.width > 32 || size.height < 1 || size.height > 32 )
-	{
-		LOGI("##Error: block size for detect edge is wrong.");
-		return edge;
-	}
-	if( src.channels() != 3 && src.channels() != 1 )
-	{
-		LOGI("##Error: source image channel must be 3 or 1.");
-		return edge;
-	}
-
-	if( src.channels() == 3 )
-		cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);
-	CustomSum(src, size.width+1, size.height, _sum);
-	ShiftDiff(_sum, 2, 0, edge);
-
-	return edge;
-}
-
 void GenEdgeImage(const cv::Mat src, const cv::Size size, cv::Mat1s &edge)
 {
 	if( size.width < 1 || size.width > 32 || size.height < 1 || size.height > 32 )
@@ -75,60 +51,6 @@ void GenEdgeImage(const cv::Mat src, const cv::Size size, cv::Mat1s &edge)
 		cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);
 	CustomSum(src, size.width+1, size.height, _sum);
 	ShiftDiff(_sum, 2, 0, edge);
-}
-
-static void GenRectifyMap(cv::Mat &mapx, cv::Mat &mapy, const StereoRectify *rectify)
-{
-	int dw = rectify->size.width, dh = rectify->size.height;
-
-	mapx = cv::Mat(dh, dw*2, CV_32FC1);
-	mapy = cv::Mat(dh, dw*2, CV_32FC1);
-
-	rectify->maps[0].copyTo(mapx(rectify->left));
-	rectify->maps[1].copyTo(mapy(rectify->left));
-
-	cv::Mat temp = rectify->maps[2] + rectify->camera->imageSize.width;
-	temp.copyTo(mapx(rectify->rght));
-	rectify->maps[3].copyTo(mapy(rectify->rght));
-}
-
-StereoPre::StereoPre(const Birdview &bird, const size_t bw, const size_t bh):
-		top(bird.end_point.y - 32), blockw(bw), blockh(bh)
-{
-	const StereoRectify *rectify = bird.rectify;
-	const int rech = MIN(MAX_SCAN_IMAGE_ROWS, rectify->size.height - top), recw = rectify->size.width;
-	const int camh = rectify->camera->imageSize.height, camw = rectify->camera->imageSize.width;
-
-	const cv::Rect rect_rec(0, top, recw*2, rech);
-	cv::Mat _mapx, _mapy;
-
-	src.create(camh, camw*2);
-	rec.create(rech, recw*2);
-	edge.create(rech, recw);
-	_sum.create(rech, recw);
-
-	GenRectifyMap(_mapx, _mapy, rectify);
-	rmapx = _mapx(rect_rec).clone();
-	rmapy = _mapy(rect_rec).clone();
-
-	left = cv::Rect(0, 0, recw, rech);
-	rght = cv::Rect(recw, 0, recw, rech);
-
-	edge.setTo(0);
-}
-
-int StereoPre::operator()(const cv::Mat srcimg)
-{
-	const size_t w = blockw, h = blockh;
-	cv::Mat gray, _rec = rec(left);
-
-	cv::cvtColor(srcimg, gray, cv::COLOR_BGR2GRAY);
-	cv::remap(gray, rec, rmapx, rmapy, cv::INTER_LINEAR);
-
-	CustomSum(_rec, w+1, 2*h+1, _sum);
-	ShiftDiff(_sum, 2, 0, edge);
-
-	return 0;
 }
 
 
@@ -370,8 +292,8 @@ public:
 
 	void operator()(const cv::Mat1s edgeImg);
 
-	int SetDetectRegion(const cv::Size imageSize, const cv::Mat road2image,
-			const float width, const float height, const float dist1 = 5, const float dist2 = 50);
+	void SetDetectRegion(const cv::Size imageSize, const cv::Mat road2image,
+			const float dist1 = 350, const float dist2 = 5000);
 
 	void SetDetectRegion(const cv::Size size, const int bottom, const int top);
 
@@ -421,14 +343,12 @@ cv::Ptr<LaneBlockDetect> LaneBlockDetect::CreateDetect(const DetectParam *stripe
 	return cv::makePtr<BlockDetectBody>(stripe, thres, min_lds);
 }
 
-int BlockDetectBody::SetDetectRegion(const cv::Size imageSize, const cv::Mat road2image,
-		const float width, const float height, const float dist1, const float dist2)
+cv::Rect DetectRegion(const cv::Size imageSize, const cv::Mat road2image,
+		const float dist1, const float dist2)
 {
-	const float max_height = height <= 0 ? imageSize.height - 20 :
-			MIN(imageSize.height - 20, height);
+	const float max_height = imageSize.height - 20, width = 350;
 	const float min_top = imageSize.height/2 - 100;
 	float top = imageSize.height, btm = 0;
-	int res = STEREO_SUCCEED;
 
 	if( !road2image.empty() )
 	{
@@ -452,18 +372,19 @@ int BlockDetectBody::SetDetectRegion(const cv::Size imageSize, const cv::Mat roa
 
 	if( top > max_height || btm < imageSize.height/2 - 40 || top >= btm )
 	{
-		res = road2image.empty() ? STEREO_ERR_NOSRC : STEREO_ERR_PARAM;
 		btm = max_height;
 		top = imageSize.height/2 - 40;
 	}
 
-	rect = cv::Rect(0, top, imageSize.width, btm - top);
-//	rect = cv::Rect(0, top/2, imageSize.width/2, (btm - top)/2);
-	line_tables.resize(rect.height);
-
-	return res;
+	return cv::Rect(0, top, imageSize.width, btm - top);
 }
 
+void BlockDetectBody::SetDetectRegion(const cv::Size imageSize, const cv::Mat road2image,
+		const float dist1, const float dist2)
+{
+	rect = DetectRegion(imageSize, road2image, dist1, dist2);
+	line_tables.resize(rect.height);
+}
 
 void BlockDetectBody::SetDetectRegion(const cv::Size imageSize,
 		const int btm, const int top)
@@ -1009,359 +930,4 @@ static void DrawCenterLine(cv::Mat image, const std::vector<LaneBlock*> &blocks,
 				cv::Scalar(0, 255, 255), width);
 }
 #endif
-
-
-//int BlockDetectBody::SetDetectRegion(const cv::Size imageSize, const cv::Mat road2image,
-//		const float width, const float height, const float dist1, const float dist2)
-//{
-//	std::vector<cv::Point2f> rps(4), ips(4);
-//	if( road2image.empty() )
-//		return STEREO_ERR_NOSRC;
-//	int res = STEREO_SUCCEED;
-//
-//	rps[0] = cv::Point2f(-width, dist1);
-//	rps[1] = cv::Point2f(+width, dist1);
-//	rps[2] = cv::Point2f(+width*2.0, dist2);
-//	rps[3] = cv::Point2f(-width*2.0, dist2);
-//	cv::perspectiveTransform(rps, ips, road2image);
-//
-//	float top = MIN(ips[3].y, ips[2].y), btm = MAX(ips[0].y, ips[1].y);
-//	float max_height = height <= 0 ? imageSize.height - 20 :
-//			MIN(imageSize.height - 20, height);
-//	LOGI("top: %f, btm: %f, max_height: %f.", top, btm, max_height);
-//
-//	if( btm > max_height )
-//		btm = max_height;
-//	if( top < imageSize.height/2 - 40 )
-//		top = imageSize.height/2 - 40;
-//
-//	if( top > max_height || btm < imageSize.height/2 - 40 || top >= btm )
-//	{
-//		res = STEREO_ERR_PARAM;
-//		btm = max_height;
-//		top = imageSize.height/2 - 40;
-//	}
-//
-//	rect = cv::Rect(0, top, imageSize.width, btm - top);
-//	line_tables.resize(rect.height);
-//	return res;
-//}
-
-//	std::vector<cv::Point> mps(4);
-//
-//	mps[0] = cv::Point(0, btm);
-//	mps[1] = cv::Point(imageSize.width, btm);
-//	mps[2] = cv::Point(imageSize.width*.7, top);
-//	mps[3] = cv::Point(imageSize.width*.3, top);
-
-// #undef R2Y
-// #undef G2Y
-// #undef B2Y
-
-// enum
-// {
-//     yuv_shift = 14,
-//     xyz_shift = 12,
-//     R2Y = 4899,
-//     G2Y = 9617,
-//     B2Y = 1868,
-//     BLOCK_SIZE = 256
-// };
-
-// const int ITUR_BT_601_CY  = 1220542;
-// const int ITUR_BT_601_CUB = 2116026;
-// const int ITUR_BT_601_CUG = -409993;
-// const int ITUR_BT_601_CVG = -852492;
-// const int ITUR_BT_601_CVR = 1673527;
-// const int ITUR_BT_601_SHIFT = 20;
-
-// #define MIN_SIZE_FOR_PARALLEL_YUV422_CONVERSION (320*240)
-
-
-// struct toYellowGrayInvokerByR : cv::ParallelLoopBody
-// {
-//     const uchar * src_data;
-//     uchar * dst_data;
-//     const size_t src_step, dst_step;
-//     const size_t width, height, rowStep;
-
-//     toYellowGrayInvokerByR(uchar *_dst_data, const size_t _dst_step,
-//     		const uchar *_src_data, const size_t _src_step,
-//     		const size_t _width, const size_t _height, const size_t _rowStep):
-//     			src_data(_src_data), dst_data(_dst_data), src_step(_src_step),
-//     			dst_step(_dst_step), width(_width), height(_height), rowStep(_rowStep)
-// 	{}
-
-//     uchar toYellowScale(uchar gray, uchar r, uchar g, uchar b) const
-//     {
-//     	return cv::saturate_cast<uchar>(r > gray ? r*2 - gray: r);
-//     }
-
-//     uchar toYellowScale(uchar g, uchar r) const
-//     {
-//     	return cv::saturate_cast<uchar>( (g + r + r + r) >> 2 );
-//     }
-
-//     uchar toYellowScale(int g, int r) const
-//     {
-//     	return cv::saturate_cast<uchar>( (g + r + r + r) >> 2 );
-//     }
-// };
-
-
-// /// template<int bIdx, int uIdx, int yIdx> /// YUYV bIdx=0, uIdx=0, yIdx=0
-// struct YUV422toRGB888Invoker : cv::ParallelLoopBody
-// {
-//     const uchar * src_data;
-//     uchar * dst_data;
-//     const size_t src_step, dst_step;
-//     const size_t width, height;
-
-//     YUV422toRGB888Invoker(uchar *_dst_data, const size_t _dst_step,
-//     		const uchar *_src_data, const size_t _src_step,
-//     		const size_t _width, const size_t _height):
-//     			src_data(_src_data), dst_data(_dst_data), src_step(_src_step),
-//     			dst_step(_dst_step), width(_width), height(_height)
-// 	{}
-
-//     void operator()(const cv::Range& range) const
-//     {
-//         int rangeBegin = range.start;
-//         int rangeEnd = range.end, sstep1 = src_step, sstep2 = src_step/2;
-
-//         int ustart = height * src_step, vstart = ustart + height * src_step/2;
-//         const uchar* ysrc = src_data + rangeBegin * sstep1;
-//         const uchar* usrc = src_data + ustart + rangeBegin * sstep2;
-//         const uchar* vsrc = src_data + vstart + rangeBegin * sstep2;
-
-//         for (int j = rangeBegin; j < rangeEnd; j++ )
-//         {
-//             uchar* row = dst_data + dst_step * j;
-
-//             for( size_t i = 0; i < width; i += 2, row += 6 )
-//             {
-//                 int u = int(usrc[i>>1]) - 128;
-//                 int v = int(vsrc[i>>1]) - 128;
-
-//                 int ruv = (1 << (ITUR_BT_601_SHIFT - 1)) + ITUR_BT_601_CVR * v;
-//                 int guv = (1 << (ITUR_BT_601_SHIFT - 1)) + ITUR_BT_601_CVG * v+ ITUR_BT_601_CUG * u;
-//                 int buv = (1 << (ITUR_BT_601_SHIFT - 1)) + ITUR_BT_601_CUB * u;
-
-//                 int y00 = MAX(0, int(ysrc[i+0]) - 16) * ITUR_BT_601_CY;
-//                 int y01 = MAX(0, int(ysrc[i+1]) - 16) * ITUR_BT_601_CY;
-
-//                 row[2] = cv::saturate_cast<uchar>((y00 + ruv) >> ITUR_BT_601_SHIFT);
-//                 row[1] = cv::saturate_cast<uchar>((y00 + guv) >> ITUR_BT_601_SHIFT);
-//                 row[0] = cv::saturate_cast<uchar>((y00 + buv) >> ITUR_BT_601_SHIFT);
-
-//                 row[5] = cv::saturate_cast<uchar>((y01 + ruv) >> ITUR_BT_601_SHIFT);
-//                 row[4] = cv::saturate_cast<uchar>((y01 + guv) >> ITUR_BT_601_SHIFT);
-//                 row[3] = cv::saturate_cast<uchar>((y01 + buv) >> ITUR_BT_601_SHIFT);
-//             }
-
-// 			ysrc += sstep1; usrc += sstep2; vsrc += sstep2;
-//         }
-//     }
-// };
-
-
-// struct BGR2YellowGrayInvoker : toYellowGrayInvokerByR
-// {
-// 	BGR2YellowGrayInvoker(uchar *_dst_data, const size_t _dst_step,
-// 			const uchar *_src_data, const size_t _src_step,
-// 			const size_t _width, const size_t _height, const size_t _rowStep = 1):
-// 				toYellowGrayInvokerByR(_dst_data, _dst_step, _src_data, _src_step,
-// 						_width, _height, _rowStep)
-//     {
-//         const int coeffs0[] = { R2Y, G2Y, B2Y };
-
-//         int b = 0, g = 0, r = (1 << (yuv_shift-1));
-//         int db = coeffs0[2], dg = coeffs0[1], dr = coeffs0[0];
-
-//         for( int i = 0; i < 256; i++, b += db, g += dg, r += dr )
-//         {
-//             tab[i] = b;
-//             tab[i+256] = g;
-//             tab[i+512] = r;
-//         }
-//     }
-
-//     void operator()(const cv::Range& range) const
-//     {
-//         const int rangeBegin = (range.start/rowStep + (range.start%rowStep?1: 0))*rowStep;
-//         const int rangeEnd = (range.end/rowStep + (range.end%rowStep?1: 0))*rowStep;
-
-//         for (int row = rangeBegin; row < rangeEnd; row += rowStep )
-//         {
-//             const uchar *src = src_data + src_step * row;
-//             uchar* dst = dst_data + dst_step * row;
-
-//             for( size_t i = 0; i < width; i++, dst++, src += 3 )
-//             {
-//             	*dst = toYellowScale(src[1], src[2]);
-//             }
-//         }
-//     }
-
-//     int tab[256*3];
-// };
-
-
-// struct YUV422toYellowGrayInvoker : toYellowGrayInvokerByR
-// {
-//     YUV422toYellowGrayInvoker(uchar *_dst_data, const size_t _dst_step,
-//     		const uchar *_src_data, const size_t _src_step,
-//     		const size_t _width, const size_t _height, const size_t _rowStep = 1):
-// 				toYellowGrayInvokerByR(_dst_data, _dst_step, _src_data, _src_step,
-// 						_width, _height, _rowStep)
-//     {}
-
-//     void operator()(const cv::Range& range) const
-//     {
-//         const int rangeBegin = (range.start/rowStep + (range.start%rowStep?1: 0))*rowStep;
-//         const int rangeEnd = (range.end/rowStep + (range.end%rowStep?1: 0))*rowStep;
-
-//         const int ustart = height * src_step, vstart = ustart + height * src_step/2;
-//         const int sstep1 = src_step, sstep2 = src_step/2;
-
-//         const uchar* ysrc = src_data + rangeBegin * sstep1;
-//         const uchar* usrc = src_data + ustart + rangeBegin* sstep2;
-//         const uchar* vsrc = src_data + vstart + rangeBegin* sstep2;
-
-//         for (int row = rangeBegin; row < rangeEnd; row += rowStep )
-//         {
-//             uchar* rowData = dst_data + dst_step * row;
-
-//             for( size_t i = 0; i < width; i += 2, rowData += 2 )
-//             {
-//                 int y00 = MAX(0, int(ysrc[i+0]) - 16) * ITUR_BT_601_CY;
-//                 int y01 = MAX(0, int(ysrc[i+1]) - 16) * ITUR_BT_601_CY;
-
-//                 int u = int(usrc[i>>1]) - 128;
-//                 int v = int(vsrc[i>>1]) - 128;
-
-//                 int ruv = (1 << (ITUR_BT_601_SHIFT - 1)) + ITUR_BT_601_CVR * v;
-//                 int guv = (1 << (ITUR_BT_601_SHIFT - 1)) + ITUR_BT_601_CVG * v+ ITUR_BT_601_CUG * u;
-
-//                 int r0 = (y00 + ruv) >> ITUR_BT_601_SHIFT;
-//                 int g0 = (y00 + guv) >> ITUR_BT_601_SHIFT;
-
-//                 int r1 = (y01 + ruv) >> ITUR_BT_601_SHIFT;
-//                 int g1 = (y01 + guv) >> ITUR_BT_601_SHIFT;
-
-//                 rowData[0] = toYellowScale(g0, r0);
-//                 rowData[1] = toYellowScale(g1, r1);
-//             }
-
-// 			ysrc += sstep1; vsrc += sstep2; usrc += sstep2;
-//         }
-//     }
-// };
-
-
-// inline void cvtYUV422toYellowGray(uchar *dst_data, const size_t dst_step,
-// 		const uchar *src_data, const size_t src_step,
-// 		const size_t width, const size_t height, const size_t rowStep)
-// {
-// 	YUV422toYellowGrayInvoker converter(dst_data, dst_step, src_data,
-// 			src_step, width, height, rowStep);
-//     if (width * height >= MIN_SIZE_FOR_PARALLEL_YUV422_CONVERSION)
-//         parallel_for_(cv::Range(0, height), converter);
-//     else
-//         converter(cv::Range(0, height));
-// }
-
-// cv::Mat cvtYUV422toYellowGray(const uchar* src_data, const cv::Size size,
-// 		const size_t rowStep)
-// {
-// 	cv::Mat gray(size, CV_8UC1, cv::Scalar::all(0));
-// 	cvtYUV422toYellowGray(gray.data, size.width, src_data,
-// 			size.width, size.width, size.height, rowStep);
-// 	return gray;
-// }
-
-// cv::Mat cvtYUV422toYellowGray(uchar *src_data, const cv::Size size,
-// 		const cv::Rect rect, const size_t rowStep)
-// {
-// 	int _ysrccnt = size.width*size.height, _usrccnt = _ysrccnt/2;
-// 	int _ydstcnt = rect.width*rect.height, _udstcnt = _ydstcnt/2;
-// 	cv::Rect uvrect(rect.x/2, rect.y, rect.width/2, rect.height);
-// 	uchar _src_data[rect.width*rect.height*2];
-
-// 	const cv::Mat ysrc(size.height, size.width  , CV_8UC1, src_data);
-// 	const cv::Mat usrc(size.height, size.width/2, CV_8UC1, src_data + _ysrccnt);
-// 	const cv::Mat vsrc(size.height, size.width/2, CV_8UC1, src_data + _ysrccnt + _usrccnt);
-
-// 	ysrc(  rect).copyTo(cv::Mat(rect.height, rect.width  , CV_8UC1, _src_data));
-// 	usrc(uvrect).copyTo(cv::Mat(rect.height, rect.width/2, CV_8UC1, _src_data + _ydstcnt));
-// 	vsrc(uvrect).copyTo(cv::Mat(rect.height, rect.width/2, CV_8UC1, _src_data + _ydstcnt + _udstcnt));
-
-// 	return cvtYUV422toYellowGray(_src_data, rect.size(), rowStep);
-// }
-
-
-// inline void cvtBGR2YellowGray(uchar *dst_data, const size_t dst_dataStep,
-// 		const uchar *src_data, const size_t src_dataStep,
-// 		const size_t width, const size_t height, const size_t rowStep)
-// {
-// 	BGR2YellowGrayInvoker converter(dst_data, dst_dataStep,
-// 			src_data, src_dataStep, width, height, rowStep);
-//     if( width * height >= MIN_SIZE_FOR_PARALLEL_YUV422_CONVERSION )
-//     	parallel_for_(cv::Range(0, height), converter);
-//     else
-//         converter(cv::Range(0, height));
-// }
-
-// cv::Mat cvtBGR2YeloowGray(const cv::Mat src)
-// {
-// 	cv::Mat gray(src.size(), CV_8UC1, cv::Scalar::all(0));
-// 	cvtBGR2YellowGray(gray.data, gray.step, (uchar*)src.ptr<cv::Vec3b>(0),
-// 			src.step, src.cols, src.rows, 1);
-// 	return gray;
-// }
-
-// cv::Mat cvtBGR2YeloowGray(const cv::Mat src, const cv::Rect rect, const int rowStep)
-// {
-// 	cv::Mat gray(rect.size(), CV_8UC1, cv::Scalar::all(0));
-// 	cvtBGR2YellowGray(gray.data, gray.step, (uchar*)src.ptr<cv::Vec3b>(0)
-// 			+ src.step * rect.y + rect.x*3, src.step, rect.width, rect.height, rowStep);
-// 	return gray;
-// }
-
-
-// inline void cvtYUV422toRGB(uchar *dst_data, size_t dst_step, const uchar *src_data, size_t src_step,
-//                            int width, int height)
-// {
-//     YUV422toRGB888Invoker converter(dst_data, dst_step, src_data, src_step, width, height);
-//     if (width * height >= MIN_SIZE_FOR_PARALLEL_YUV422_CONVERSION)
-//         parallel_for_(cv::Range(0, height), converter);
-//     else
-//         converter(cv::Range(0, height));
-// }
-
-
-// cv::Mat cvtYUV422toBGR(const uchar* src_data, const cv::Size size)
-// {
-// 	cv::Mat gray(size, CV_8UC3, cv::Scalar::all(0));
-// 	cvtYUV422toRGB(gray.data, gray.step, src_data, size.width, size.width, size.height);
-// 	return gray;
-// }
-
-// cv::Mat cvtYUV422toBGR(uchar *src_data, const cv::Size size, const cv::Rect rect)
-// {
-// 	int _ysrccnt = size.width*size.height, _usrccnt = _ysrccnt/2;
-// 	int _ydstcnt = rect.width*rect.height, _udstcnt = _ydstcnt/2;
-// 	cv::Rect uvrect(rect.x/2, rect.y, rect.width/2, rect.height);
-// 	uchar _src_data[rect.width*rect.height*2];
-
-// 	const cv::Mat ysrc(size.height, size.width  , CV_8UC1, src_data);
-// 	const cv::Mat usrc(size.height, size.width/2, CV_8UC1, src_data + _ysrccnt);
-// 	const cv::Mat vsrc(size.height, size.width/2, CV_8UC1, src_data + _ysrccnt + _usrccnt);
-
-// 	ysrc(  rect).copyTo(cv::Mat(rect.height, rect.width  , CV_8UC1, _src_data));
-// 	usrc(uvrect).copyTo(cv::Mat(rect.height, rect.width/2, CV_8UC1, _src_data + _ydstcnt));
-// 	vsrc(uvrect).copyTo(cv::Mat(rect.height, rect.width/2, CV_8UC1, _src_data + _ydstcnt + _udstcnt));
-
-// 	return cvtYUV422toBGR(_src_data, rect.size());
-// }
 

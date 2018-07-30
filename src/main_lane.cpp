@@ -9,11 +9,11 @@
 #include "core/plot.hpp"
 #include "core/comimg.hpp"
 #include "core/stereo.hpp"
-#include "core/tricam.hpp"
 #include "core/yuvcvt.hpp"
 
 #include "ground/distgrid.hpp"
 #include "track.hpp"
+#include "locate.hpp"
 
 //#define TEST_TIME                 1
 
@@ -54,11 +54,12 @@ struct LaneTrackArg
 	int left_count, rght_count;
 	double m0, mx, my;
 	cv::TickMeter tick;
+	LaneLocate locate;
 
 	LaneTrackArg(const StereoRectify *const rectify, const Birdview *bird):
 		camera(rectify->camera), tran(0), blockSize(4, 3),
 		grid(10, 5, 500, 100, 500, 0), datas(3, 500, CV_64FC1), epts(rectify->size, CV_32FC1),
-		left_count(0), rght_count(0), m0(0), mx(0), my(0)
+		left_count(0), rght_count(0), m0(0), mx(0), my(0), locate(camera->imageSize, bird->ori_left.road2image)
 	{
 		track.release();
 		detect = LaneBlockDetect::CreateDetect(EDGE_GRADIENT_THRESH*12, 20);// *12, *16,
@@ -67,16 +68,17 @@ struct LaneTrackArg
 		{
 			cv::Mat road2im, im2road;
 
-			tran = line.tri ? &((TriBV*)bird)->ori_record: &bird->ori_left;
+//			tran = line.tri ? &((TriBV*)bird)->ori_record: &bird->ori_left;
+			tran = &bird->ori_left;
 			tran->image2road.copyTo(im2road);
 			tran->road2image.copyTo(road2im);
 
 #if ADASLANE_HALF_IMAGE
 			road2im.rowRange(0, 2) *=.5;
 			im2road.colRange(0, 2) *= 2;
-			detect->SetDetectRegion(camera->imageSize/2, road2im, 350, 0, 350, 5000);
+			detect->SetDetectRegion(camera->imageSize/2, road2im, 350, 5000);
 #else
-			detect->SetDetectRegion(camera->imageSize, road2im, 350, 0, 350, 5000);
+			detect->SetDetectRegion(camera->imageSize, road2im, 350, 5000);
 #endif
 			track = cv::makePtr<LaneTrackBasedRoad>(detect, tran->road2image,
 					im2road, line.car_width *.1);
@@ -127,6 +129,11 @@ struct LaneTrackArg
 			tick.start();
 			(*track)(gray, detect, blockSize);
 #endif
+
+			if( track->left.index == track->frameIndex )
+			{
+				locate(track->rght.road_line, image, 40);
+			}
 
 //			track->FrushStep(1, 2, 3);
 			tick.stop();
@@ -352,19 +359,19 @@ int main(int argc, char* argv[])
 	if( res < 0 )
 		return STEREO_ERR_ARG;
 
-	cv::Ptr<StereoCamera> camera;
-	cv::Ptr<Birdview> road;
+	cv::Ptr<StereoCamera> camera = cv::makePtr<StereoCamera>();
+	cv::Ptr<Birdview> road = cv::makePtr<StereoBV>(camera->compact);
 
-	if( !line.tri )
-	{
-		camera = cv::makePtr<StereoCamera>();
-		road = cv::makePtr<StereoBV>(camera->compact);
-	}
-	else
-	{
-		camera = cv::makePtr<TriCamera>(cv::Size(640, 480));
-		road = cv::makePtr<TriBV>(camera->compact);
-	}
+//	if( !line.tri )
+//	{
+//		camera = cv::makePtr<StereoCamera>();
+//		road = cv::makePtr<StereoBV>(camera->compact);
+//	}
+//	else
+//	{
+//		camera = cv::makePtr<TriCamera>(cv::Size(640, 480));
+//		road = cv::makePtr<TriBV>(camera->compact);
+//	}
 
 	if( camera->Open(line.path) == 0 )
 	{
@@ -380,64 +387,7 @@ int main(int argc, char* argv[])
 			road->genMapOrigin(line.pixel_unit, cv::Point2f(0, line.shift));
 	}
 
-#if TEST_TIME
-	if( strlen(line.input) )
-	{
-		printf("%s in %s(%d).\n", __func__, __FILE__, __LINE__);
-
-		cv::Mat yuvimg, bgrimg, gray, temp;
-		cv::Mat dsts[] = {gray, temp};
-	    int frmto[] = {0,0, 1,1, 2,2, 3,3};
-
-		res = load_image(yuvimg, line.path, line.input, 1, 0);
-		cv::imshow("yuv image", yuvimg);
-
-		int src_step = yuvimg.cols, height = yuvimg.rows>>1;
-        int ustart = height * src_step, vstart = ustart + height * src_step/2;
-        uchar* src_data = yuvimg.data;
-
-        gray = cv::Mat(300, 400, CV_8UC1);
-		CvtYUV422toYellowGray(src_data, src_data + ustart, src_data + vstart,
-				src_step, 100, 100, gray.data, 400, 300);
-		cv::imshow("gray image", gray);
-
-        bgrimg = cv::Mat(height, src_step, CV_8UC3);
-        CvtYUV422toRGB888(src_data, src_data + ustart, src_data + vstart, src_step,
-        		bgrimg.data, src_step, height);
-        cv::cvtColor(gray, bgrimg(cv::Rect(100, 100, 400, 300)), cv::COLOR_GRAY2BGR);
-		cv::imshow("bgr image", bgrimg);
-
-		cv::imwrite("image_bgr.jpg", bgrimg);
-
-		cv::waitKey(0);
-	}
-	else
-	{
-		BiImage combimg(line.path, &line.search);
-		combimg.Search(true);
-
-		if( !combimg.HasImages() )
-			return 0;
-		cv::Mat image, _inte;
-
-		const int len = combimg.left_size();
-		std::vector<cv::Mat> clrImgs(len), grayImgs(len);
-		const std::vector<std::string> &files = combimg.GetFileList1();
-
-		for( int i = 0; i < len; i++ )
-		{
-//				load_image(images[i], line.path, files[i].c_str());
-			load_image(image, line.path, files[i].c_str());
-			clrImgs[i] = image;
-			color2gray(image, grayImgs[i]);
-		}
-
-		DetectParam rowStep(1);
-		cv::Ptr<LaneBlockDetect> detect = LaneBlockDetect::CreateDetect(&rowStep, 4, 1, -2, 20);
-		detect->SetDetectRegion(camera->imageSize, road->ori_left.road2image, 350, 0, 350, 3000);
-		TestTime_ScanEdgeLines(grayImgs, detect, &rowStep);
-	}
-#else
+#if !TEST_TIME
 
 	const cv::Rect rect(0, 0, 1280, 480);
 	LaneTrackArg trackArg(camera->compact, road);
@@ -525,7 +475,67 @@ int main(int argc, char* argv[])
 		combimg.Search(true);
 		combimg.load(TrackLanes, (void*)&trackArg);
 	}
-#endif
+
+#else // TEST_TIME
+
+	if( strlen(line.input) )
+	{
+		printf("%s in %s(%d).\n", __func__, __FILE__, __LINE__);
+
+		cv::Mat yuvimg, bgrimg, gray, temp;
+		cv::Mat dsts[] = {gray, temp};
+	    int frmto[] = {0,0, 1,1, 2,2, 3,3};
+
+		res = load_image(yuvimg, line.path, line.input, 1, 0);
+		cv::imshow("yuv image", yuvimg);
+
+		int src_step = yuvimg.cols, height = yuvimg.rows>>1;
+        int ustart = height * src_step, vstart = ustart + height * src_step/2;
+        uchar* src_data = yuvimg.data;
+
+        gray = cv::Mat(300, 400, CV_8UC1);
+		CvtYUV422toYellowGray(src_data, src_data + ustart, src_data + vstart,
+				src_step, 100, 100, gray.data, 400, 300);
+		cv::imshow("gray image", gray);
+
+        bgrimg = cv::Mat(height, src_step, CV_8UC3);
+        CvtYUV422toRGB888(src_data, src_data + ustart, src_data + vstart, src_step,
+        		bgrimg.data, src_step, height);
+        cv::cvtColor(gray, bgrimg(cv::Rect(100, 100, 400, 300)), cv::COLOR_GRAY2BGR);
+		cv::imshow("bgr image", bgrimg);
+
+		cv::imwrite("image_bgr.jpg", bgrimg);
+
+		cv::waitKey(0);
+	}
+	else
+	{
+		BiImage combimg(line.path, &line.search);
+		combimg.Search(true);
+
+		if( !combimg.HasImages() )
+			return 0;
+		cv::Mat image, _inte;
+
+		const int len = combimg.left_size();
+		std::vector<cv::Mat> clrImgs(len), grayImgs(len);
+		const std::vector<std::string> &files = combimg.GetFileList1();
+
+		for( int i = 0; i < len; i++ )
+		{
+//				load_image(images[i], line.path, files[i].c_str());
+			load_image(image, line.path, files[i].c_str());
+			clrImgs[i] = image;
+			color2gray(image, grayImgs[i]);
+		}
+
+		DetectParam rowStep(1);
+		cv::Ptr<LaneBlockDetect> detect = LaneBlockDetect::CreateDetect(&rowStep, 4, 1, -2, 20);
+		detect->SetDetectRegion(camera->imageSize, road->ori_left.road2image, 350, 0, 350, 3000);
+		TestTime_ScanEdgeLines(grayImgs, detect, &rowStep);
+	}
+
+#endif //TEST_TIME
 
 	return res;
 }
