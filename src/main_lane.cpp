@@ -92,7 +92,7 @@ struct LaneTrackArg
 			LOGI("##Warning: road parameter has wrong, lane detecting uses open model.");
 		}
 
-		std::cout<<detect->GetDetectRect()<<std::endl;
+		std::cout<<"DetectRect: "<<detect->GetDetectRect()<<std::endl;
 
 		epts = 0; datas = 0;
 		grid.GenGroundPts();
@@ -125,17 +125,20 @@ struct LaneTrackArg
 				track->rght.image_line[3] *= 2;
 			}
 #else
-			gray = cvtBGR2YeloowGray(image, track->rect, detect->GetRowStep()->stripe);
+			//gray = cvtBGR2YeloowGray(image, track->rect, detect->GetRowStep()->stripe);
+
 			tick.start();
+			cv::cvtColor(image(track->rect), gray, cv::COLOR_BGR2GRAY);
 			(*track)(gray, detect, blockSize);
 #endif
 
-			if( track->left.index == track->frameIndex )
-			{
-				locate(track->rght.road_line, image, 40);
-			}
+			// if( track->left.index == track->frameIndex )
+			// 	locate(track->left.road_line, image, 40);
 
-//			track->FrushStep(1, 2, 3);
+			if( track->left.index == track->frameIndex || track->rght.index == track->frameIndex )
+				locate(track->left.road_line, track->rght.road_line, image, 40);
+
+			track->FrushStep(1, 2, 3);
 			tick.stop();
 
 //			LaneBlock *left_block = track->blocks()[track->leftIndex];
@@ -158,8 +161,7 @@ struct LaneTrackArg
 //		PlotShift();
 
 		cv::Mat dispImg = image.clone(), temp = line.tri ? dispImg: dispImg(camera->left);
-//		detect->Show(temp);
-
+		detect->Show(temp);
 		track->Show(temp);
 //		cv::circle(temp, ep, 5, cv::Scalar(0, 0, 255), 2);
 

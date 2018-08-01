@@ -92,7 +92,6 @@ add_executable(${output_filename}
 core/comimg.cpp
 core/stereo.cpp
 core/plot.cpp
-core/yuvcvt.cpp
 
 ground/distgrid.cpp
 
