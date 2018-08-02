@@ -9,9 +9,10 @@
 #include "core/plot.hpp"
 #include "core/comimg.hpp"
 #include "core/stereo.hpp"
-#include "core/yuvcvt.hpp"
 
 #include "ground/distgrid.hpp"
+
+#include "yuvcvt.hpp"
 #include "track.hpp"
 #include "locate.hpp"
 

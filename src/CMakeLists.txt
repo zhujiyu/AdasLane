@@ -95,6 +95,7 @@ core/plot.cpp
 
 ground/distgrid.cpp
 
+yuvcvt.cpp
 detect.cpp
 track.cpp
 road.cpp
